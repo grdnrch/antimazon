@@ -1,0 +1,11 @@
+/* Immediately hide known sponsored containers before JS runs */
+.AdHolder,
+[data-component-type="sp-sponsored-result"],
+[data-cel-widget*="AdHolder"],
+[cel_widget_id*="multi-brand-creative"],
+[cel_widget_id*="sb-desktop"],
+[cel_widget_id*="ad-"],
+div[id^="sp_detail"],
+div[id^="ape_"] {
+  display: none !important;
+}
