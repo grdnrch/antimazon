@@ -106,6 +106,23 @@
     );
   }
 
+  function isForbiddenContainer(node) {
+    if (!node || node.nodeType !== Node.ELEMENT_NODE) return true;
+    const role = node.getAttribute('role');
+    if (role === 'main' || role === 'dialog' || role === 'navigation' || role === 'banner') {
+      return true;
+    }
+    if (node.querySelector('[role="main"], [role="dialog"]')) {
+      return true;
+    }
+    // A single Marketplace grid card is a single column tile (never wider than ~500px)
+    const width = node.offsetWidth;
+    if (width > 520) {
+      return true;
+    }
+    return false;
+  }
+
   function hasListingCardContent(node) {
     if (!node || node.nodeType !== Node.ELEMENT_NODE) return false;
     return Boolean(node.querySelector(FB_LISTING_LINK_SELECTOR) && node.querySelector('img'));
@@ -113,14 +130,20 @@
 
   function findMarketplaceCardToHide(badgeEl) {
     let curr = badgeEl;
+    let depth = 0;
+    const MAX_DEPTH = 10;
 
-    // Walk up until we find the grid cell whose parent holds multiple sibling cards
-    while (curr && curr !== document.body && curr !== document.documentElement) {
+    // Walk up at most MAX_DEPTH levels to find the single grid cell card
+    while (curr && curr !== document.body && curr !== document.documentElement && depth < MAX_DEPTH) {
       const parent = curr.parentElement;
       if (!parent) break;
 
+      if (isForbiddenContainer(curr)) {
+        return null;
+      }
+
       if (hasListingCardContent(curr)) {
-        // Check if any sibling of `curr` also contains a Marketplace card
+        // Check if any sibling of `curr` in the same grid row/container also contains a card
         let siblingHasCard = false;
         for (const child of parent.children) {
           if (child !== curr && hasListingCardContent(child)) {
@@ -130,9 +153,6 @@
         }
 
         if (siblingHasCard) {
-          // If `curr` is a whole "Sponsored" section containing only external ads, or a single grid card,
-          // make sure we don't hide a container that holds multiple organic `/marketplace/item/` listings
-          // unless `curr` itself is a single promoted `/marketplace/item/` card.
           const organicLinks = curr.querySelectorAll('a[href*="/marketplace/item/"]');
           const uniqueItemIds = new Set();
           organicLinks.forEach((a) => {
@@ -148,36 +168,32 @@
       }
 
       curr = parent;
+      depth++;
     }
 
     return null;
   }
 
   function hideFacebookMarketplaceAds() {
-    if (!window.location.pathname.startsWith('/marketplace')) return;
+    const pathname = window.location.pathname;
+    // Only run on Marketplace browse/search pages, never inside an individual item detail view
+    if (!pathname.startsWith('/marketplace') || pathname.startsWith('/marketplace/item')) {
+      return;
+    }
 
-    // 1. Hide cards that link out to external Facebook ad redirects (l.facebook.com / /ads/)
-    document.querySelectorAll('a[href*="l.facebook.com"], a[href*="/ads/"]').forEach((adLink) => {
-      if (adLink.closest('[data-antimazon-hidden="true"]')) return;
-      const card = findMarketplaceCardToHide(adLink);
-      if (card) {
-        card.setAttribute('data-antimazon-hidden', 'true');
-      }
-    });
-
-    // 2. Hide Marketplace cards marked with an "Ad" or "Sponsored" badge
+    // Hide Marketplace grid cards explicitly marked with an "Ad" or "Sponsored" badge
     const candidates = document.querySelectorAll(
       'span, div[aria-label="Ad"], div[aria-label="Sponsored"], a[aria-label="Ad"], a[aria-label="Sponsored"]'
     );
 
     for (const el of candidates) {
       if (el.closest('[data-antimazon-hidden="true"]')) continue;
+      if (el.closest('[role="dialog"]')) continue;
 
       const aria = el.getAttribute('aria-label') || '';
       let isAd = isAdLabelText(aria);
 
       if (!isAd) {
-        // Check leaf or small badge elements
         const raw = el.textContent || '';
         if (raw.length > 0 && raw.length <= 30) {
           if (el.children.length === 0 && isAdLabelText(raw)) {

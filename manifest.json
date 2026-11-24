@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Antimazon",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "Removes sponsored and excluded search results on Amazon (defaulting sort to Avg. Customer Review) and hides ads on Facebook Marketplace and Reddit.",
   "content_scripts": [
     {
