@@ -5,6 +5,7 @@ A lightweight Manifest V3 Chrome extension that cleans up Amazon search results:
 - **Defaults sorting to Avg. Customer Review** (`review-rank`) on Amazon.
 - **Filters out excluded keywords** (such as `"christian"`) on Amazon.
 - **Hides items marked as Ad / Sponsored** on Facebook Marketplace search results.
+- **Hides promoted posts and sidebar/comment ads** on Reddit.
 
 ## Installation (Unpacked)
 1. Open Chrome and navigate to `chrome://extensions/`.

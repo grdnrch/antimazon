@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Antimazon",
-  "version": "1.1.0",
-  "description": "Removes sponsored and excluded search results on Amazon (defaulting sort to Avg. Customer Review) and hides ads on Facebook Marketplace.",
+  "version": "1.2.0",
+  "description": "Removes sponsored and excluded search results on Amazon (defaulting sort to Avg. Customer Review) and hides ads on Facebook Marketplace and Reddit.",
   "content_scripts": [
     {
       "matches": [
@@ -11,7 +11,8 @@
         "*://*.amazon.co.uk/*",
         "*://*.amazon.de/*",
         "*://*.amazon.com.au/*",
-        "*://*.facebook.com/*"
+        "*://*.facebook.com/*",
+        "*://*.reddit.com/*"
       ],
       "js": ["content.js"],
       "css": ["styles.css"],

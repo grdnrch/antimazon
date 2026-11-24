@@ -2,6 +2,7 @@
   const hostname = window.location.hostname;
   const isAmazon = hostname.includes('amazon.');
   const isFacebook = hostname.includes('facebook.com');
+  const isReddit = hostname.includes('reddit.com');
 
   const REVIEW_SORT_VALUE = 'review-rank';
 
@@ -197,6 +198,47 @@
   }
 
   // ============================================================================
+  // REDDIT LOGIC
+  // ============================================================================
+
+  function hideRedditAds() {
+    const adSelectors = [
+      'shreddit-ad-post',
+      'shreddit-comments-page-ad',
+      'shreddit-sidebar-ad',
+      'shreddit-dynamic-ad-link',
+      'shreddit-post[promoted]',
+      '.promotedlink',
+      '.promoted',
+      '#siteTable_promoted',
+      'div[data-before-content="advertisement"]',
+      '[data-testid="ad-post"]'
+    ];
+
+    document.querySelectorAll(adSelectors.join(',')).forEach((el) => {
+      const container = el.closest('article') || el;
+      container.setAttribute('data-antimazon-hidden', 'true');
+    });
+
+    // Catch fallback posts/cards containing a "Promoted" badge
+    document.querySelectorAll('article, shreddit-post, [data-testid="post-container"]').forEach((post) => {
+      if (post.getAttribute('data-antimazon-hidden') === 'true') return;
+
+      const spans = post.querySelectorAll('span, div');
+      for (const el of spans) {
+        if (el.children.length === 0) {
+          const text = (el.textContent || '').trim();
+          if (text === 'Promoted' || text === 'Sponsored') {
+            const container = post.closest('article') || post;
+            container.setAttribute('data-antimazon-hidden', 'true');
+            break;
+          }
+        }
+      }
+    });
+  }
+
+  // ============================================================================
   // INITIALIZATION & OBSERVER
   // ============================================================================
 
@@ -208,6 +250,8 @@
       removeAmazonSponsoredResults();
     } else if (isFacebook) {
       hideFacebookMarketplaceAds();
+    } else if (isReddit) {
+      hideRedditAds();
     }
   }
 
