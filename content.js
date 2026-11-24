@@ -93,8 +93,6 @@
   // FACEBOOK MARKETPLACE LOGIC
   // ============================================================================
 
-  const FB_LISTING_LINK_SELECTOR = 'a[href*="/marketplace/item/"], a[href*="l.facebook.com"], a[href*="/ads/"]';
-
   function isAdLabelText(rawText) {
     if (!rawText) return false;
     const text = rawText.replace(/[\u200B-\u200D\uFEFF]/g, '').trim();
@@ -106,6 +104,35 @@
     );
   }
 
+  // Extract visible text from a small badge element while ignoring hidden anti-adblock decoy spans
+  function getCleanBadgeText(el) {
+    if (!el) return '';
+    if (el.children.length === 0) {
+      return (el.textContent || '').trim();
+    }
+    let result = '';
+    const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+    let node;
+    while ((node = walker.nextNode())) {
+      const parent = node.parentElement;
+      if (!parent) continue;
+      const style = window.getComputedStyle(parent);
+      if (
+        style.display === 'none' ||
+        style.visibility === 'hidden' ||
+        style.opacity === '0' ||
+        style.fontSize === '0px' ||
+        style.width === '0px' ||
+        style.height === '0px' ||
+        (style.position === 'absolute' && parseFloat(style.left) < -100)
+      ) {
+        continue;
+      }
+      result += node.nodeValue;
+    }
+    return result.trim();
+  }
+
   function isForbiddenContainer(node) {
     if (!node || node.nodeType !== Node.ELEMENT_NODE) return true;
     const role = node.getAttribute('role');
@@ -115,7 +142,7 @@
     if (node.querySelector('[role="main"], [role="dialog"]')) {
       return true;
     }
-    // A single Marketplace grid card is a single column tile (never wider than ~500px)
+    // A single Marketplace grid card is a single column tile (never wider than ~520px)
     const width = node.offsetWidth;
     if (width > 520) {
       return true;
@@ -123,17 +150,34 @@
     return false;
   }
 
-  function hasListingCardContent(node) {
+  function isCardSizedTile(node) {
     if (!node || node.nodeType !== Node.ELEMENT_NODE) return false;
-    return Boolean(node.querySelector(FB_LISTING_LINK_SELECTOR) && node.querySelector('img'));
+    const w = node.offsetWidth;
+    const h = node.offsetHeight;
+    return w >= 120 && w <= 520 && h >= 140;
   }
 
-  function findMarketplaceCardToHide(badgeEl) {
-    let curr = badgeEl;
-    let depth = 0;
-    const MAX_DEPTH = 10;
+  function hasCardMedia(node) {
+    if (!node || node.nodeType !== Node.ELEMENT_NODE) return false;
+    return Boolean(node.querySelector('img, video'));
+  }
 
-    // Walk up at most MAX_DEPTH levels to find the single grid cell card
+  function countOrganicMarketplaceIds(node) {
+    const organicLinks = node.querySelectorAll('a[href*="/marketplace/item/"]');
+    const uniqueItemIds = new Set();
+    organicLinks.forEach((a) => {
+      const match = a.getAttribute('href')?.match(/\/marketplace\/item\/(\d+)/);
+      if (match) uniqueItemIds.add(match[1]);
+    });
+    return uniqueItemIds.size;
+  }
+
+  // Walk up from any inner element (badge, video, link) to the outer grid cell of that single card
+  function findMarketplaceGridTile(startEl) {
+    let curr = startEl;
+    let depth = 0;
+    const MAX_DEPTH = 25;
+
     while (curr && curr !== document.body && curr !== document.documentElement && depth < MAX_DEPTH) {
       const parent = curr.parentElement;
       if (!parent) break;
@@ -142,25 +186,21 @@
         return null;
       }
 
-      if (hasListingCardContent(curr)) {
-        // Check if any sibling of `curr` in the same grid row/container also contains a card
-        let siblingHasCard = false;
+      if (hasCardMedia(curr) && isCardSizedTile(curr)) {
+        const parentWidth = parent.offsetWidth;
+        // When `parent` is the multi-column row/grid container, it is significantly wider than a single tile
+        const isMultiColumnParent = parentWidth > curr.offsetWidth * 1.7;
+
+        let siblingHasMedia = false;
         for (const child of parent.children) {
-          if (child !== curr && hasListingCardContent(child)) {
-            siblingHasCard = true;
+          if (child !== curr && hasCardMedia(child)) {
+            siblingHasMedia = true;
             break;
           }
         }
 
-        if (siblingHasCard) {
-          const organicLinks = curr.querySelectorAll('a[href*="/marketplace/item/"]');
-          const uniqueItemIds = new Set();
-          organicLinks.forEach((a) => {
-            const match = a.getAttribute('href')?.match(/\/marketplace\/item\/(\d+)/);
-            if (match) uniqueItemIds.add(match[1]);
-          });
-
-          if (uniqueItemIds.size <= 1) {
+        if (isMultiColumnParent && siblingHasMedia) {
+          if (countOrganicMarketplaceIds(curr) <= 1) {
             return curr;
           }
           return null;
@@ -174,6 +214,28 @@
     return null;
   }
 
+  function tileHasAdBadge(tile) {
+    // Fast check on innerText lines
+    const lines = (tile.innerText || '').split('\n');
+    for (const line of lines) {
+      if (isAdLabelText(line)) return true;
+    }
+
+    // Check aria-labels and obfuscated small text containers inside the tile
+    const els = tile.querySelectorAll('span, div[aria-label], a[aria-label]');
+    for (const el of els) {
+      const aria = el.getAttribute('aria-label') || '';
+      if (isAdLabelText(aria)) return true;
+
+      if (el.children.length <= 15 && (el.textContent || '').length <= 45) {
+        if (isAdLabelText(getCleanBadgeText(el))) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
   function hideFacebookMarketplaceAds() {
     const pathname = window.location.pathname;
     // Only run on Marketplace browse/search pages, never inside an individual item detail view
@@ -181,33 +243,69 @@
       return;
     }
 
-    // Hide Marketplace grid cards explicitly marked with an "Ad" or "Sponsored" badge
+    // 1. Locate all active Marketplace grid containers via organic `/marketplace/item/` links
+    // and inspect every sibling tile in those grids.
+    const gridContainers = new Set();
+    document.querySelectorAll('a[href*="/marketplace/item/"]').forEach((link) => {
+      if (link.closest('[role="dialog"]')) return;
+      const tile = findMarketplaceGridTile(link);
+      if (tile && tile.parentElement) {
+        gridContainers.add(tile.parentElement);
+      }
+    });
+
+    gridContainers.forEach((grid) => {
+      for (const tile of grid.children) {
+        if (tile.getAttribute('data-antimazon-hidden') === 'true') continue;
+        if (isForbiddenContainer(tile) || !hasCardMedia(tile) || !isCardSizedTile(tile)) continue;
+
+        const hasOrganicItemLink = Boolean(tile.querySelector('a[href*="/marketplace/item/"]'));
+        const hasVideo = Boolean(tile.querySelector('video'));
+        const hasText = (tile.innerText || '').trim().length > 0;
+
+        // Every real Marketplace item tile links to `/marketplace/item/<id>`.
+        // Injected third-party ad tiles (e.g. video ads or brand ads) sit in the same grid
+        // without a `/marketplace/item/` link, or contain a `<video>` player, or carry an "Ad" label.
+        if ((!hasOrganicItemLink && hasText) || hasVideo || tileHasAdBadge(tile)) {
+          tile.setAttribute('data-antimazon-hidden', 'true');
+        }
+      }
+    });
+
+    // 2. Fallback: directly find any `<video>` or "Ad"/"Sponsored" badge in Marketplace grids
+    document.querySelectorAll('video').forEach((video) => {
+      if (video.closest('[data-antimazon-hidden="true"], [role="dialog"]')) return;
+      const tile = findMarketplaceGridTile(video);
+      if (tile) {
+        tile.setAttribute('data-antimazon-hidden', 'true');
+      }
+    });
+
     const candidates = document.querySelectorAll(
       'span, div[aria-label="Ad"], div[aria-label="Sponsored"], a[aria-label="Ad"], a[aria-label="Sponsored"]'
     );
 
     for (const el of candidates) {
-      if (el.closest('[data-antimazon-hidden="true"]')) continue;
-      if (el.closest('[role="dialog"]')) continue;
+      if (el.closest('[data-antimazon-hidden="true"], [role="dialog"]')) continue;
 
       const aria = el.getAttribute('aria-label') || '';
       let isAd = isAdLabelText(aria);
 
       if (!isAd) {
         const raw = el.textContent || '';
-        if (raw.length > 0 && raw.length <= 30) {
+        if (raw.length > 0 && raw.length <= 45 && el.children.length <= 15) {
           if (el.children.length === 0 && isAdLabelText(raw)) {
             isAd = true;
-          } else if (el.children.length > 0 && el.children.length <= 12 && isAdLabelText(el.innerText)) {
+          } else if (isAdLabelText(getCleanBadgeText(el))) {
             isAd = true;
           }
         }
       }
 
       if (isAd) {
-        const card = findMarketplaceCardToHide(el);
-        if (card) {
-          card.setAttribute('data-antimazon-hidden', 'true');
+        const tile = findMarketplaceGridTile(el);
+        if (tile) {
+          tile.setAttribute('data-antimazon-hidden', 'true');
         }
       }
     }
