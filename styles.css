@@ -6,6 +6,7 @@
 [cel_widget_id*="sb-desktop"],
 [cel_widget_id*="ad-"],
 div[id^="sp_detail"],
-div[id^="ape_"] {
+div[id^="ape_"],
+[data-antimazon-hidden="true"] {
   display: none !important;
 }
